@@ -50,7 +50,7 @@
 
 
 /**
- * The base class for the $.oElement.
+ * The base class for the $.oElement.<br> Elements hold the drawings displayed by a "READ" Node or Drawing Node. They can be used to create new drawings, rename them, etc.
  * @constructor
  * @classdesc  $.oElement Class
  * @param   {int}                   id                          The element ID.
@@ -61,7 +61,7 @@
  */
 $.oElement = function( id, oColumnObject){
   this._type = "element";
-  
+
   this.id = id;
   this.column = oColumnObject;
 }
@@ -69,7 +69,7 @@ $.oElement = function( id, oColumnObject){
 // $.oElement Object Properties
 
 /**
- * The name of the column.
+ * The name of the element.
  * @name $.oElement#name
  * @type {string}
  */
@@ -77,7 +77,7 @@ Object.defineProperty($.oElement.prototype, 'name', {
     get : function(){
          return element.getNameById(this.id)
     },
- 
+
     set : function(newName){
          element.renameById(this.id, newName);
     }
@@ -94,89 +94,168 @@ Object.defineProperty($.oElement.prototype, 'path', {
          return fileMapper.toNativePath(element.completeFolder(this.id))
     }
 })
- 
- 
+
+
 /**
  * The drawings available in the element.
  * @name $.oElement#drawings
  * @type {$.oDrawing[]}
  */
 Object.defineProperty($.oElement.prototype, 'drawings', {
-    get : function(){
-        var _drawingsNumber = Drawings.numberOf(this.id)
-        var _drawings = [];
-        for (var i=0; i<_drawingsNumber; i++){
-            _drawings.push( new this.$.oDrawing(Drawing.name(this.id, i), this) );
-        }
-        return _drawings;
+  get : function(){
+    var _drawingsNumber = Drawing.numberOf(this.id);
+    var _drawings = [];
+    for (var i=0; i<_drawingsNumber; i++){
+      _drawings.push( new this.$.oDrawing(Drawing.name(this.id, i), this) );
     }
+    return _drawings;
+  }
 })
- 
+
 
 /**
  * The file format of the element.
- * @name $.oElement#drawings
- * @type {$.oDrawing[]}
+ * @name $.oElement#format
+ * @type {string}
  */
 Object.defineProperty($.oElement.prototype, 'format', {
-    get : function(){
-        var _type = element.pixmapFormat(this.id);
-        if (_type == "SCAN") _type = "TVG"
-        return _type
-    }
+  get : function(){
+    var _type = element.pixmapFormat(this.id);
+    if (element.vectorType(this.id)) _type = "TVG";
+    return _type;
+  }
 })
- 
- 
+
+
+/**
+ * The palettes linked to this element.
+ * @name $.oElement#palettes
+ * @type {$.oPalette[]}
+ */
+Object.defineProperty($.oElement.prototype, 'palettes', {
+  get: function(){
+    var _paletteList = PaletteObjectManager.getPaletteListByElementId(this.id);
+    var _palettes = [];
+    for (var i=0; i<_paletteList.numPalettes; i++){
+      _palettes.push( new this.$.oPalette( _paletteList.getPaletteByIndex(i), _paletteList ) );
+    }
+
+    return _palettes;
+  }
+})
+
+
 // $.oElement Class methods
 
 /**
  * Adds a drawing to the element. Provide a filename to import an external file as a drawing.
- * @param   {int}        atFrame              The exposures to extend. If UNDEFINED, extends all keyframes.
- * @param   {name}       name                 The name of the drawing to add.
- * @param   {bool}       filename             The filename for the drawing to add.
- *  
+ * @param   {int}        [atFrame]              The frame at which to add the drawing on the $.oDrawingColumn. Values < 1 create no exposure.
+ * @param   {name}       [name]                 The name of the drawing to add.
+ * @param   {string}     [filename]             The filename for the drawing to add.
+ *
  * @return {$.oDrawing}      The added drawing
  */
 $.oElement.prototype.addDrawing = function( atFrame, name, filename ){
-    if (typeof filename === 'undefined') var filename = false;
-    if (typeof name === 'undefined') var name = atFrame+''
-   
-    var fileExists = filename?true:false;
-    // TODO deal with fileExists and storeInProjectFolder
-    Drawing.create (this.id, name, fileExists, true);
-   
-    if (filename){
-        //copy the imported file at the newly created drawing place
-        var _file = new this.$.oFile(Drawing.filename(this.id, name));
-        //MessageLog.trace(_file)
-       
-        var _frameFile = new this.$.oFile( filename );
-        _frameFile.move( _file.folder.path, true );
-       
-    }
-   
-    // place drawing on the column at the provided frame
-    if (this.column != null || this.column != undefined)
-        column.setEntry(this.column.uniqueName, 1, atFrame, name)
-   
-    return new this.$.oDrawing( name, this );
+  if (typeof atFrame === 'undefined') var atFrame = 1;
+  if (typeof filename === 'undefined') var filename = null;
+  if (typeof name === 'undefined') var name = atFrame+'';
+
+  if (!(filename instanceof this.$.oFile)) filename = new this.$.oFile(filename);
+
+  var _fileExists = filename.exists;
+  // TODO deal with fileExists and storeInProjectFolder
+  Drawing.create (this.id, name, _fileExists, true);
+
+  var _drawing = new this.$.oDrawing( name, this );
+
+  if (_fileExists) _drawing.importBitmap(filename);
+
+  // place drawing on the column at the provided frame
+  if (this.column != null || this.column != undefined && atFrame >= 1){
+    column.setEntry(this.column.uniqueName, 1, atFrame, name);
+  }
+
+  return _drawing;
 }
- 
+
 
 /**
  * Gets a drawing object by the name.
  * @param   {string}     name              The name of the drawing to get.
- * 
- * @return { $.oDrawing }      The added drawing
+ *
+ * @return { $.oDrawing }      The drawing found by the search
  */
 $.oElement.prototype.getDrawingByName = function ( name ){
     return new this.$.oDrawing( name, this );
 }
- 
+
+
 /**
- * Not yet implemented.
- * @param   {string}        paletteFile              The path to the palette file to link.
+ * Link a provided palette to an element as an Element palette.
+ * @param   {$.oPalette}    oPaletteObject              The oPalette object to link
+ * @param   {int}           [listIndex]              The index in the element palette list at which to add the newly linked palette
+ * @return  {$.oPalette}    The linked element palette.
  */
-$.oElement.prototype.linkPalette = function ( paletteFile ){
-  throw "Not yet implemented";
+$.oElement.prototype.linkPalette = function ( oPaletteObject , listIndex){
+  var _paletteList = PaletteObjectManager.getPaletteListByElementId(this.id);
+  if (typeof listIndex === 'undefined') var listIndex = _paletteList.numPalettes;
+
+  var _palettePath = oPaletteObject.path.path.replace(".plt", "");
+
+  var _palette = new this.$.oPalette(_paletteList.insertPalette (_palettePath, listIndex), _paletteList);
+  return _palette;
+}
+
+
+/**
+ * If the palette passed as a parameter is linked to this element, it will be unlinked, and moved to the scene palette list.
+ * @param {$.oPalette} oPaletteObject
+ */
+$.oElement.prototype.unlinkPalette = function ( oPaletteObject) {
+  log(oPaletteObject.id)
+  var _palettes = this.palettes;
+  var _ids = _palettes.map(function(x){return x.id});
+  var _paletteId = oPaletteObject.id;
+  var _paletteIndex = _ids.indexOf(_paletteId);
+  log(_paletteIndex)
+  if (_paletteIndex == -1) return; // palette already isn't linked
+
+  var _palette = _palettes[_paletteIndex];
+  try{
+    _palette.remove(false);
+    return true;
+  }catch(err){
+    this.$.debug("Failed to unlink palette "+_palette.name+" from element "+this.name);
+    return false;
+  }
+}
+
+
+
+/**
+ * Duplicate an element.
+ * @param   {string}     [name]              The new name for the duplicated element.
+ * @return  {$.oElement}      The duplicate element
+ */
+$.oElement.prototype.duplicate = function(name){
+  if (typeof name === 'undefined') var name = this.name;
+
+  var _fieldGuide = element.fieldChart(this.id);
+  var _scanType = element.scanType(this.id);
+
+  var _duplicateElement = this.$.scene.addElement(name, this.format, _fieldGuide, _scanType);
+
+  var _drawings = this.drawings;
+  var _elementFolder = new this.$.oFolder(_duplicateElement.path);
+
+  for (var i in _drawings){
+    var _drawingFile = new this.$.oFile(_drawings[i].path);
+    try{
+      var duplicateDrawing = _duplicateElement.addDrawing(0, _drawings[i].name, _drawingFile);
+      _drawingFile.copy(_elementFolder, duplicateDrawing.name, true);
+    }catch(err){
+      this.debug("could not copy drawing file "+drawingFile.name+" into element "+_duplicateElement.name, this.DEBUG_LEVEL.ERROR);
+    }
+  }
+  return _duplicateElement;
 }
